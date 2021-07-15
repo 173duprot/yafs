@@ -53,7 +53,7 @@ int mem[MEM_SIZE];
 #define STACK_SIZE 100
 #define RETURN_STACK_SIZE 100
 #define DICTIONARY_SIZE 1000
-#define NUMBER_OF_POINTERS 4
+#define NUMBER_OF_POINTERS 5
 
 /* locations */
 
@@ -67,9 +67,10 @@ int const PTR =		0;
 
 #define stack_ptr	mem[0]	// Points to the top of the stack
 #define rstack_ptr	mem[1]	// Points to the top of the return stack
-#define dstack_ptr	mem[2]	// Points to the latest dictionary address stack entry
-#define dict_mem_ptr	mem[3]	// Points to the top (last free space)  of the dictionary memory
-/* 	...
+#define dstack_ptr	mem[2]	// Points to the top of the dictionary address stack
+#define dict_mem_ptr	mem[3]	// Points to the next free space in dictionary memory
+#define pc		mem[4]	// Program counter - points to the next place in memory being interprited
+/* 	...		...
 	bruh_ptr	mem[NUMBER_OF_POINTERS] */
 
 void ptr_init(void)
@@ -78,6 +79,7 @@ void ptr_init(void)
 	rstack_ptr = RSTACK;	
 	dstack_ptr = DSTACK;	
 	dict_mem_ptr = DICT_MEM;
+	pc = STACK; /* doenst init to anything */
 }
 
 /* __ first functions __
@@ -92,8 +94,12 @@ void ptr_init(void)
 * 	
 * dict	
 * 	iterate_dict_stack_ptr()	__memory safe adding to dictionary address stack
-*	iterate_dict_mem_ptr()		__memory safe adding to dictionary memory
+*	iterate_dict_mem_ptr(x)		__memory safe adding to dictionary memory
 *	dict_mem_write(data, addr)	__memory safe write to dictionary memory space
+*
+* pc
+*	iterate_pc(x)
+*	pc_write(arrd)
 */ 	
 
 
@@ -198,6 +204,11 @@ void dict_mem_write (int data)
 	}
 }
 
+/* pc */
+void iterate_pc (int amount)
+{
+	mem[pc] = mem[pc] + amount;
+}
 
 /* __ base functions __
 *
@@ -211,12 +222,6 @@ void dict_mem_write (int data)
 *
 * dict		__Read "Dictionary structure" comment to understand this bit
 *	dpush(x)	__pushes an address onto the dictionary address stack
-* 	define(		__puts a word in the dictionary and adds its addr to the dict stack
-*		char* word,
-*		int immediate,
-*		void (*f)(void *), 
-*		char* data
-*	      )
 */ 	
 
 
@@ -260,19 +265,39 @@ void dpush(int val)
 	mem[dstack_ptr] = val;
 }
 
+/* Dictionary structure
+* 
+* word			string (null-terminated)
+* immediate flag	int
+* hidden flag		int
+* function pointer  <----------------------------(* for interprited words, this
+* data		       	string (null-terminated) (* calls the interiter 
+* 						 (* for builtins, this calls a
+*						 (* function directly
+*/
+
+/* __ advanced functions __
+*
+* dict
+*	dict_init(word)	__puts a word in the dictionary and adds its addr to the dict stack
+*	immediate(0|1)	__puts flag on stack
+*		void (*f)(void *), 
+*		char* data
+*	      )
+*
+* char* word,		/* string, null terminated already
+* int immediate,
+* int hidden,
+* void (*fp)(void *),
+*/
+
 /* This is for reading and writing the function pointer into mem[] */
 #define	FP_READ(fp, addr)	memcpy(&fp, &mem[addr], sizeof(fp))
 #define	FP_WRITE(fp, addr)	memcpy(&mem[addr], &fp, sizeof(fp))
 #define FP_SIZE			sizeof(void(*)())/sizeof(int)
 
-void define(
-		char* word,		/* string, null terminated already */
-		int immediate,
-		int hidden,
-		void (*fp)(void *),
-		char* data		/* also a null terminated string */
-				)
-{	
+void dict_init(char* word)
+{
 	/* push the current dict_mem_ptr location onto the dictionary stack */
 	dpush(dict_mem_ptr);
 
@@ -288,42 +313,68 @@ void define(
 		iterate_dict_mem_ptr(1);
 	}
 
+}
+
+void dict_immediate(int immediate)
+{
 	/* write the immediate flag */
 	dict_mem_write(immediate);
 	iterate_dict_mem_ptr(1);
+}
 
-	/* write the hidden flag */
+/*void dict_hidden(int immediate)
+{
+	/* write the hidden flag *
 	dict_mem_write(hidden);
 	iterate_dict_mem_ptr(1);
+}*/
 
+
+void dict_link( void (*fp)(void *))
+{	
 	/* write the function pointer */
 	FP_WRITE(fp, dict_mem_ptr);
 	iterate_dict_mem_ptr(FP_SIZE);
-
-
-	/* write the data string 	-- NOTE: builtins will just have a null character here (\0) */
-	int data_size = strlen(data); /* i could still have this pointer shit wrong */
-	for(int i = 0; i < data_size + 1; i++) 	/* word_size + 1 because we want the */
-	{					/* null (\0) character written too */
-		dict_mem_write(data[i]);
-		iterate_dict_mem_ptr(1);
-	}
 }
 
-/* Dictionary structure
-* 
-* word			string (null-terminated)
-* immediate flag	int
-* hidden flag		int
-* function pointer  <--------------------------------------(* for interprited words, this calls the interiter
-* data		       	string (null-terminated)	   (* for builtins, this calls a function directly
-*/ 
+void dict_close()
+{
+	/*  */
+	
+}
 
 /* __ Builtins__
 * 
-* stack
-*	drop	(a -- ) __ deletes the top of the stack
+* compiling
+*    :	define	__read in the next space-delimited word, add it to
+*			the end of our string storage, and generate
+*			a header for the new word so that when it
+*			is typed it compiles a pointer to itself
+*			so that it can be executed.		
 * 
+* stack
+*	drop	(a -- ) 	__deletes the top of the stack
+8	dup	(a -- a a)	__duplicates the top stack item
+*	swap	(a b -- b a)	__reverses the top two stack items
+*	over	(a b -- a b a)	__copies second item to top
+*	rot	(a b c -- b c a)__rotates third item to top
+* 	
+* math
+*    +	sum	(a b -- sum)
+*    -	diff	(a b -- diff)
+*    *	mult	(a b -- mult)
+*    /	div	(a b -- div)
+*	mod	(a b -- reminder)
+*    <	lt	(a b -- lt?)
+*    >	gt	(a b -- gt?)
+*    =  eq	(a b -- eq?)
+*
+* ascii 		
+* 	dot	(a -- )		__prints whats on the top of the stack with putchar()
+* 				
+* 		
+* 		
+* 		
  */
 
 /* stack */
@@ -336,12 +387,12 @@ void drop(void)
 void (*drop_ptr)(void) = &drop;
 
 
-void echo(void)
+void dot(void)
 {
 	putchar(pop());
 }
 /* pointer */
-void (*echo_ptr)(void) = &echo;
+void (*dot_ptr)(void) = &dot;
 
 
 
