@@ -1,4 +1,4 @@
-# yafs
+/* yafs -- yet another forth shell */
 
 Minimal forth shell in C99
 
